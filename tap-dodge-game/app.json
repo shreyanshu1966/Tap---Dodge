@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Tap & Dodge",
+    "slug": "tap-dodge-game",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "tap-dodge",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/tap-dodge-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/tap-dodge-adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/images/favicon.png"
+    }
+  }
+}
