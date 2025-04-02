@@ -28,8 +28,10 @@ export const useSoundManager = ({ muted = false }: SoundManagerProps) => {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Load all sounds on component mount
+  // Load sounds only once when the component mounts
   useEffect(() => {
+    let isMounted = true;
+    
     const loadSounds = async () => {
       try {
         // Configure audio mode
@@ -38,25 +40,29 @@ export const useSoundManager = ({ muted = false }: SoundManagerProps) => {
           staysActiveInBackground: false,
         });
         
-        // Simplified sound loading - without actual files for now
-        // This prevents the app from crashing while allowing it to function
-        setLoaded(true);
+        // Only set state if component is still mounted
+        if (isMounted) {
+          setLoaded(true);
+        }
       } catch (error) {
         console.error('Error loading sounds:', error);
-        setError('Failed to load sound assets');
+        if (isMounted) {
+          setError('Failed to load sound assets');
+        }
       }
     };
     
     loadSounds();
     
     return () => {
+      isMounted = false;
       Object.values(sounds.current).forEach(sound => {
         if (sound) {
           sound.unloadAsync();
         }
       });
     };
-  }, []);
+  }, []); // Empty dependency array ensures this only runs once
   
   // Add a dummy function that doesn't try to play sounds
   const playSound = async (type: SoundType) => {

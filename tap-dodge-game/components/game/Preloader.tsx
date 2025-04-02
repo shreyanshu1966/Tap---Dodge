@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  runOnJS,
 } from 'react-native-reanimated';
 
 interface PreloaderProps {
@@ -16,6 +17,8 @@ interface PreloaderProps {
 const Preloader: React.FC<PreloaderProps> = ({ onComplete, assetStatus }) => {
   const [progress, setProgress] = useState(0);
   const opacity = useSharedValue(1);
+  const hasStartedAnimation = useRef(false);
+  const completeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Calculate loading progress based on asset status
   useEffect(() => {
@@ -23,16 +26,47 @@ const Preloader: React.FC<PreloaderProps> = ({ onComplete, assetStatus }) => {
     if (assetStatus.sounds) newProgress += 100;
     setProgress(newProgress);
     
-    // Check if all assets are loaded
-    if (newProgress >= 100) {
+    // Check if all assets are loaded and animation hasn't started yet
+    if (newProgress >= 100 && !hasStartedAnimation.current) {
+      hasStartedAnimation.current = true; // Mark animation as started
+      
       // Wait a bit then fade out
-      setTimeout(() => {
-        opacity.value = withTiming(0, { duration: 500 }, () => {
-          onComplete();
+      completeTimeoutRef.current = setTimeout(() => {
+        opacity.value = withTiming(0, { duration: 500 }, (finished) => {
+          if (finished) {
+            // Make sure onComplete is a function before calling it
+            if (typeof onComplete === 'function') {
+              runOnJS(onComplete)();
+            }
+          }
         });
       }, 500);
     }
-  }, [assetStatus]);
+    
+    // Cleanup timeout on unmount or when dependencies change
+    return () => {
+      if (completeTimeoutRef.current) {
+        clearTimeout(completeTimeoutRef.current);
+      }
+    };
+  }, [assetStatus.sounds]); // Remove opacity and onComplete from dependency array
+  
+  // Fallback: Force complete loading after a maximum time (5 seconds)
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      if (!hasStartedAnimation.current) {
+        console.log('Loading timed out, forcing completion');
+        hasStartedAnimation.current = true;
+        opacity.value = withTiming(0, { duration: 500 }, (finished) => {
+          if (finished && typeof onComplete === 'function') {
+            runOnJS(onComplete)();
+          }
+        });
+      }
+    }, 5000);
+
+    return () => clearTimeout(fallbackTimer);
+  }, []); // This empty dependency array is correct
   
   const animatedStyle = useAnimatedStyle(() => {
     return {

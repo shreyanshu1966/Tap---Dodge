@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { memo } from 'react';
+import { StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 
 interface ObstacleProps {
@@ -14,33 +14,37 @@ interface ObstacleProps {
 }
 
 const Obstacle: React.FC<ObstacleProps> = ({ position, size }) => {
+  // Optimize animated style calculation
   const animatedStyle = useAnimatedStyle(() => {
     return {
       transform: [{ translateY: position.y.value }],
+      left: position.x,
+      width: size.width,
+      height: size.height,
     };
   });
 
   return (
-    <Animated.View
-      style={[
-        styles.obstacle,
-        animatedStyle,
-        {
-          left: position.x,
-          width: size.width,
-          height: size.height,
-        },
-      ]}
-    />
+    <Animated.View style={[styles.obstacle, animatedStyle]} />
   );
 };
 
 const styles = StyleSheet.create({
   obstacle: {
     position: 'absolute',
-    backgroundColor: '#EF4444', // Red color similar to Tailwind's red-500
+    backgroundColor: '#EF4444', // Red color
     borderRadius: 4,
   },
 });
 
-export default Obstacle;
+// Use memo with custom comparison for better performance
+export default memo(Obstacle, (prevProps, nextProps) => {
+  // Only re-render if size or x position changed
+  // The y position is handled by Reanimated
+  return (
+    prevProps.position.x === nextProps.position.x &&
+    prevProps.size.width === nextProps.size.width &&
+    prevProps.size.height === nextProps.size.height &&
+    prevProps.position.y === nextProps.position.y
+  );
+});

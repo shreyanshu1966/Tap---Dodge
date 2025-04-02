@@ -30,7 +30,9 @@ const TapFeedback: React.FC<TapFeedbackProps> = ({ position, onComplete }) => {
     );
     
     scale.value = withTiming(1, { duration: 350 }, () => {
-      onComplete();
+      if (typeof onComplete === 'function') {
+        onComplete();
+      }
     });
   }, []);
   

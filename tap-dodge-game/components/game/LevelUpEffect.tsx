@@ -34,7 +34,9 @@ const LevelUpEffect: React.FC<LevelUpEffectProps> = ({ level, onComplete }) => {
       withTiming(1.2, { duration: 200 }),
       withTiming(1.8, { duration: 300 }),
       withTiming(0.8, { duration: 200 }, () => {
-        runOnJS(onComplete)();
+        if (typeof onComplete === 'function') {
+          runOnJS(onComplete)();
+        }
       })
     );
     

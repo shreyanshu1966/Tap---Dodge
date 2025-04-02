@@ -123,7 +123,9 @@ const CollisionParticles: React.FC<CollisionParticlesProps> = ({
     
     // Clean up after animation completes
     const timeout = setTimeout(() => {
-      onComplete();
+      if (typeof onComplete === 'function') {
+        onComplete();
+      }
     }, 1000);
     
     return () => clearTimeout(timeout);
