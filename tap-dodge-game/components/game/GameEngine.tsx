@@ -3,11 +3,9 @@ import { View, StyleSheet, Dimensions, TouchableWithoutFeedback, Text, Platform 
 import Animated, { useSharedValue, withSpring, runOnJS, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
-import Player from './Player';
-import Obstacle from './Obstacle';
+import PhysicsGameEngine from './PhysicsEngine';
 import ScoreDisplay from './ScoreDisplay';
 import DirectionalIndicators from './DirectionalIndicators';
-import TapFeedback from './TapFeedback';
 import GameBackground from './GameBackground';
 import GameStats from './GameStats';
 import CountdownTimer from './CountdownTimer';
@@ -20,6 +18,9 @@ import PerformanceMonitor from './PerformanceMonitor';
 import DevSettings from './DevSettings';
 import Preloader from './Preloader';
 import { Analytics } from '@/utils/Analytics';
+import Player from './Player';
+import Obstacle from './Obstacle';
+import TapFeedback from './TapFeedback';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PLAYER_SIZE = 40;
@@ -200,7 +201,12 @@ const GameEngine: React.FC<GameEngineProps> = ({
     }
 
     // Generate first obstacle immediately
-    generateObstacle();
+    setTimeout(() => {
+      if (gameStateRef.current === 'playing') {
+        generateObstacle();
+        console.log("First obstacle generated");
+      }
+    }, 500);
     
     // Set up interval for subsequent obstacles
     obstacleGeneratorRef.current = setInterval(() => {
@@ -324,42 +330,42 @@ const generateObstacle = () => {
   const width = Math.random() * (OBSTACLE_MAX_WIDTH - OBSTACLE_MIN_WIDTH) + OBSTACLE_MIN_WIDTH;
   const height = Math.random() * (OBSTACLE_MAX_HEIGHT - OBSTACLE_MIN_HEIGHT) + OBSTACLE_MIN_HEIGHT;
   
-  // Better obstacle placement logic
+  // Improved obstacle placement logic
   const playerCenter = playerPosition.value + (PLAYER_SIZE / 2);
-  const safeZoneWidth = PLAYER_SIZE * 2.5; // Slightly wider safe zone
-  const safeZoneLeft = Math.max(0, playerCenter - safeZoneWidth);
-  const safeZoneRight = Math.min(SCREEN_WIDTH, playerCenter + safeZoneWidth);
+  const playerLeft = playerPosition.value;
+  const playerRight = playerPosition.value + PLAYER_SIZE;
   
-  // Generate x position with improved algorithm
-  let x: number;
+  // Create a safe zone around player that gets smaller as difficulty increases
+  const safeZoneWidth = PLAYER_SIZE * Math.max(1.5, 3 - (difficultyLevel * 0.1));
+  const safeZoneLeft = Math.max(0, playerLeft - safeZoneWidth/2);
+  const safeZoneRight = Math.min(SCREEN_WIDTH, playerRight + safeZoneWidth/2);
   
-  // Decide which side to generate on based on player position
-  if (playerCenter < SCREEN_WIDTH / 3) {
-    // Player is on left side, more likely to generate on right
-    x = safeZoneRight + Math.random() * (SCREEN_WIDTH - safeZoneRight - width);
-  } else if (playerCenter > SCREEN_WIDTH * 2/3) {
-    // Player is on right side, more likely to generate on left
+  // Better x-position calculation with fallbacks
+  let x = 0;
+  
+  // Try to generate outside the safe zone first
+  if (Math.random() > 0.5 && safeZoneLeft > width) {
+    // Generate to the left of player
     x = Math.random() * (safeZoneLeft - width);
+  } else if (safeZoneRight + width < SCREEN_WIDTH) {
+    // Generate to the right of player
+    x = safeZoneRight + Math.random() * (SCREEN_WIDTH - safeZoneRight - width);
   } else {
-    // Player is in middle, generate on either side
-    x = Math.random() > 0.5 
-      ? Math.random() * Math.max(0, safeZoneLeft - width)
-      : Math.min(SCREEN_WIDTH - width, safeZoneRight) + Math.random() * Math.max(0, SCREEN_WIDTH - safeZoneRight - width);
-  }
-  
-  // Fallback if calculation resulted in invalid position
-  if (isNaN(x) || x < 0 || x > SCREEN_WIDTH - width) {
+    // Fallback to random position if safe zone covers too much
     x = Math.random() * (SCREEN_WIDTH - width);
   }
   
-  // Get a shared value from the pool with proper error handling
+  // Ensure x is within bounds
+  x = Math.max(0, Math.min(SCREEN_WIDTH - width, x));
+  
+  // Get a shared value from the pool
   const poolIndex = obstacles.length % MAX_OBSTACLES;
   const yPosition = sharedValuePool.current[poolIndex];
   
   if (!yPosition) return;
   
-  // Position above screen with random starting point for natural falling pattern
-  yPosition.value = -height - (Math.random() * 50);
+  // Position above screen with random offsets for natural pattern
+  yPosition.value = -height - (Math.random() * 100);
   
   // Store reference and create new obstacle
   const newId = nextObstacleId.current++;
@@ -376,7 +382,7 @@ const generateObstacle = () => {
   ]);
 };
 
-// Replace the startGameLoop function with this more efficient version
+// Replace the startGameLoop function with this more robust version
 const startGameLoop = () => {
   if (gameLoopRef.current) {
     cancelAnimationFrame(gameLoopRef.current);
@@ -384,28 +390,39 @@ const startGameLoop = () => {
   
   let lastTime = performance.now();
   const targetFrameTime = 1000 / 60; // Target 60 FPS
+  let accumulatedTime = 0;
+  const maxDeltaTime = 50; // Maximum allowed delta time in ms
   
   const gameLoop = () => {
-    const currentTime = performance.now();
-    const deltaTime = currentTime - lastTime;
-    
-    if (deltaTime >= targetFrameTime) {
-      if (gameStateRef.current === 'playing') {
-        // Use deltaTime to make animations frame rate independent
-        const speedFactor = deltaTime / targetFrameTime;
-        updateObstaclesWithDelta(speedFactor);
-        checkCollisions();
-      }
-      lastTime = currentTime;
-    }
-    
-    // Continue the game loop if still playing
-    if (gameStateRef.current === 'playing') {
+    if (gameStateRef.current !== 'playing') {
       gameLoopRef.current = requestAnimationFrame(gameLoop);
+      return;
     }
+    
+    const currentTime = performance.now();
+    let deltaTime = Math.min(currentTime - lastTime, maxDeltaTime); // Cap deltaTime
+    accumulatedTime += deltaTime;
+    lastTime = currentTime;
+    
+    // Run update at fixed time steps for more consistent physics
+    while (accumulatedTime >= targetFrameTime) {
+      // Calculate speed factor for frame rate independence
+      const speedFactor = targetFrameTime / 16.667; // Normalize to 60fps
+      
+      // Update game state
+      updateObstaclesWithDelta(speedFactor);
+      
+      // Always check collisions on every physics step to prevent tunneling
+      checkCollisions();
+      
+      accumulatedTime -= targetFrameTime;
+    }
+    
+    // Continue the game loop
+    gameLoopRef.current = requestAnimationFrame(gameLoop);
   };
   
-  // Start the game loop using requestAnimationFrame for better timing
+  // Start the game loop
   gameLoopRef.current = requestAnimationFrame(gameLoop);
 };
 
@@ -415,20 +432,23 @@ const updateObstaclesWithDelta = (speedFactor: number) => {
   if (gameStateRef.current !== 'playing') return;
 
   setObstacles(prevObstacles => {
+    // Create a new array to avoid mutation
+    const updatedObstacles = [...prevObstacles];
     const obstaclesToKeep: typeof prevObstacles = [];
     
-    // Update positions with delta time adjustment
-    for (const obstacle of prevObstacles) {
+    // Update positions with delta time adjustment for smooth movement
+    for (const obstacle of updatedObstacles) {
       if (!obstacle.position.y) continue;
       
-      // Update position
-      obstacle.position.y.value += obstacleSpeed.current * speedFactor;
+      // Apply velocity with delta time for consistent movement
+      const newY = obstacle.position.y.value + (obstacleSpeed.current * speedFactor);
+      obstacle.position.y.value = newY;
       
-      // Check if still visible
-      if (obstacle.position.y.value < SCREEN_HEIGHT) {
+      // Check if still visible (with buffer for proper cleanup)
+      if (newY < SCREEN_HEIGHT + 100) {
         obstaclesToKeep.push(obstacle);
       } else {
-        // Clean up and reset for reuse
+        // Clean up and reset shared value for reuse
         delete obstacleYPositions.current[obstacle.id];
         obstacle.position.y.value = -100;
       }
@@ -482,54 +502,63 @@ const updateObstacles = () => {
   }
 };
 
-// Optimize the checkCollisions function
+// Optimize the checkCollisions function with improved accuracy and performance
 const checkCollisions = () => {
   if (gameStateRef.current !== 'playing') return;
   
-  // Get current player position values - calculate once for efficiency
+  // Get current player position values only once for efficiency
   const playerLeft = playerPosition.value;
   const playerRight = playerPosition.value + PLAYER_SIZE;
   const playerTop = SCREEN_HEIGHT - PLATFORM_HEIGHT - PLAYER_SIZE;
   const playerBottom = SCREEN_HEIGHT - PLATFORM_HEIGHT;
   
-  // Use a slightly smaller hitbox for more forgiving collisions
-  const collisionBuffer = 5;
+  // Create a slightly smaller hitbox for more natural feel
+  // But not too small that it feels unfair
+  const collisionBuffer = isDevMode ? 8 : 4; // Smaller buffer for more accurate hits
   const playerHitboxLeft = playerLeft + collisionBuffer;
   const playerHitboxRight = playerRight - collisionBuffer;
   const playerHitboxTop = playerTop + collisionBuffer;
   
-  // Only check obstacles that are in the collision zone (near the player)
-  const potentialCollisions = obstacles.filter(obstacle => {
-    if (!obstacle.position.y) return false;
+  // Check ALL obstacles instead of filtering first
+  // This is more reliable with fast-moving objects
+  for (const obstacle of obstacles) {
+    if (!obstacle.position.y) continue;
+    
     const obstacleTop = obstacle.position.y.value;
     const obstacleBottom = obstacleTop + obstacle.size.height;
     
-    // Is the obstacle near the bottom of the screen where player is?
-    return obstacleBottom >= playerTop && obstacleTop <= playerBottom;
-  });
-  
-  // Check each potential collision with improved precision
-  for (const obstacle of potentialCollisions) {
-    if (!obstacle.position.y) continue;
+    // Quick vertical check first (most obstacles fail this)
+    if (obstacleBottom < playerHitboxTop || obstacleTop > playerBottom) {
+      continue; // No collision possible
+    }
     
     const obstacleLeft = obstacle.position.x;
     const obstacleRight = obstacle.position.x + obstacle.size.width;
-    const obstacleTop = obstacle.position.y.value;
-    const obstacleBottom = obstacleTop + obstacle.size.height;
     
-    // Add small buffer at the bottom of obstacles for more forgiving collisions
-    const obstacleHitboxBottom = obstacleBottom - collisionBuffer;
+    // Use minimal collision buffer for obstacles to prevent "passing through"
+    const obstacleCollisionBuffer = 2;
+    const obstacleHitboxLeft = obstacleLeft + obstacleCollisionBuffer;
+    const obstacleHitboxRight = obstacleRight - obstacleCollisionBuffer;
+    const obstacleHitboxTop = obstacleTop + obstacleCollisionBuffer;
+    const obstacleHitboxBottom = obstacleBottom - obstacleCollisionBuffer;
     
-    // Check for collision with adjusted hitboxes
+    // Check for horizontal overlap - complete AABB collision test
+    // Expanded test to catch edge cases better
     if (
-      playerHitboxRight > obstacleLeft &&
-      playerHitboxLeft < obstacleRight &&
-      playerHitboxTop < obstacleHitboxBottom &&
-      playerBottom > obstacleTop
+      (playerHitboxRight > obstacleHitboxLeft && playerHitboxLeft < obstacleHitboxRight) && 
+      (playerHitboxTop < obstacleHitboxBottom && playerBottom > obstacleHitboxTop)
     ) {
+      // Log collision details with more precision
+      console.log(
+        `Collision detected at ${new Date().getTime()}ms! ` +
+        `Player: (${playerHitboxLeft.toFixed(2)},${playerHitboxTop.toFixed(2)})-(${playerHitboxRight.toFixed(2)},${playerBottom.toFixed(2)}), ` +
+        `Obstacle: (${obstacleHitboxLeft.toFixed(2)},${obstacleHitboxTop.toFixed(2)})-(${obstacleHitboxRight.toFixed(2)},${obstacleHitboxBottom.toFixed(2)})`
+      );
+      
       // Call handleGameOver through runOnJS for thread safety
+      // Use a small timeout to ensure visual state is consistent
       runOnJS(handleGameOver)();
-      break;
+      return; // Exit immediately to prevent multiple collisions
     }
   }
 };
@@ -777,9 +806,22 @@ useEffect(() => {
   return cleanup;
 }, []);
 
+// Add this for debugging
+useEffect(() => {
+  console.log("Player position:", playerPosition.value);
+}, [playerPosition.value]);
+
   return (
     <TouchableWithoutFeedback onPress={handleTap}>
       <View style={styles.container}>
+        <MemoizedGameBackground isPlaying={gameState === 'playing'} />
+        
+        {/* Remove any condition that might be hiding the player */}
+        <MemoizedPlayer
+          position={playerPosition}
+          direction={playerDirection}
+        />
+        
         {!loadingComplete && (
           <Preloader 
             onComplete={() => setLoadingComplete(true)}
@@ -805,26 +847,15 @@ useEffect(() => {
           />
         )}
         
-        {/* Platform */}
-        <View style={styles.platform} />
-        
-        {/* Player */}
-        <MemoizedPlayer position={playerPosition} direction={playerDirection} />
+        {/* Use the new Physics Game Engine */}
+        <PhysicsGameEngine 
+          isPlaying={gameState === 'playing'}
+          difficultyLevel={difficultyLevel}
+          onGameOver={handleGameOver}
+        />
         
         {/* Directional Indicators */}
         <DirectionalIndicators visible={showTutorial && gameState === 'playing'} />
-        
-        {/* Obstacles */}
-        {obstacles.map(obstacle => (
-          <MemoizedObstacle 
-            key={`obstacle-${obstacle.id}`}
-            position={{
-              x: obstacle.position.x,
-              y: obstacle.position.y, // Pass the entire shared value, don't access .value
-            }}
-            size={obstacle.size}
-          />
-        ))}
         
         {/* Tap Feedback */}
         {tapFeedback.map(tap => (

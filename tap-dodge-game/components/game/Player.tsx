@@ -37,6 +37,7 @@ const styles = StyleSheet.create({
     height: PLAYER_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10, // Add this to ensure player is visible
   },
   player: {
     width: PLAYER_SIZE,
