@@ -5,9 +5,14 @@ import { ThemedText } from '@/components/ThemedText';
 interface GameStatsProps {
   difficulty: number;
   obstacleSpeed: number;
+  obstacleCount?: number; // Add this property with optional modifier
 }
 
-const GameStats: React.FC<GameStatsProps> = ({ difficulty, obstacleSpeed }) => {
+const GameStats: React.FC<GameStatsProps> = ({ 
+  difficulty, 
+  obstacleSpeed,
+  obstacleCount = 0 // Default to 0 if not provided
+}) => {
   // Convert difficulty to a more user-friendly scale (1-10)
   const displayDifficulty = Math.min(10, Math.max(1, Math.floor(difficulty)));
   
@@ -21,6 +26,12 @@ const GameStats: React.FC<GameStatsProps> = ({ difficulty, obstacleSpeed }) => {
       <View style={styles.statItem}>
         <ThemedText style={styles.statLabel}>SPEED</ThemedText>
         <ThemedText style={styles.statValue}>{obstacleSpeed.toFixed(1)}</ThemedText>
+      </View>
+      
+      {/* Add a new stat item for obstacle count */}
+      <View style={styles.statItem}>
+        <ThemedText style={styles.statLabel}>OBSTACLES</ThemedText>
+        <ThemedText style={styles.statValue}>{obstacleCount}</ThemedText>
       </View>
     </View>
   );

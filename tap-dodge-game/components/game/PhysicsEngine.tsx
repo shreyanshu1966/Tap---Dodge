@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Dimensions, StyleSheet, GestureResponderEvent } from 'react-native';
+import React, { useEffect, useState, useRef, useImperativeHandle, forwardRef } from 'react';
+import { View, Dimensions, StyleSheet } from 'react-native';
 import { GameEngine } from 'react-native-game-engine';
 import Matter from 'matter-js';
+import { SharedValue } from 'react-native-reanimated';
 
 // Game constants
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -12,6 +13,7 @@ const OBSTACLE_MAX_WIDTH = 80;
 const OBSTACLE_MIN_HEIGHT = 20;
 const OBSTACLE_MAX_HEIGHT = 40;
 const MAX_OBSTACLES = 15; // Limit active obstacles for performance
+const PLAYER_MOVE_DISTANCE = 70;
 
 // Define game entity types for better type safety
 interface GameStateEntity {
@@ -41,10 +43,9 @@ interface ObstacleEntity {
   renderer: (props: any) => JSX.Element;
 }
 
-// Change this interface
 interface PhysicsEntity {
-  engine: any; // Changed from Matter.Engine
-  world: any;  // Changed from Matter.World
+  engine: Matter.IEngine;
+  world: Matter.IWorld;
 }
 
 interface GameEntities {
@@ -56,7 +57,8 @@ interface GameEntities {
 
 // Define system event types
 interface GameEvent {
-  type: 'game-over' | 'move-left' | 'move-right';
+  type: 'game-over' | 'move-left' | 'move-right' | 'update-player-position';
+  position?: number; // For update-player-position
 }
 
 interface TimeUpdate {
@@ -65,7 +67,7 @@ interface TimeUpdate {
   elapsed: number;
 }
 
-// Update your Physics system
+// Physics system: update physics engine
 const Physics = (entities: GameEntities, { time }: { time: TimeUpdate }) => {
   if (!entities.physics) return entities;
   
@@ -84,7 +86,7 @@ const ObstacleGenerator = (
   entities: GameEntities, 
   { time, dispatch }: { time: TimeUpdate; dispatch: (event: GameEvent) => void }
 ) => {
-  if (!entities.gameState) return entities;
+  if (!entities.gameState || !entities.player) return entities;
   
   const world = entities.physics.world;
   const { obstacleSpeed, lastObstacleTime, generationInterval, obstacles } = entities.gameState;
@@ -240,7 +242,7 @@ const ObstacleMovement = (
     try {
       const obstacle = entities[obstacleId] as ObstacleEntity | undefined;
       if (obstacle && obstacle.body) {
-        Matter.Composite.remove(world, obstacle.body, true); // Add the keepStatic parameter
+        Matter.Composite.remove(world, obstacle.body, true);
         delete entities[obstacleId];
         entities.gameState.obstacles = entities.gameState.obstacles.filter(id => id !== obstacleId);
       }
@@ -301,7 +303,7 @@ const CollisionSystem = (
 // Improved player control system with smooth motion
 const PlayerControl = (
   entities: GameEntities, 
-  { events }: { events?: GameEvent[] }
+  { events, dispatch }: { events?: GameEvent[]; dispatch: (event: GameEvent) => void }
 ) => {
   if (!entities.player) return entities;
   
@@ -311,7 +313,7 @@ const PlayerControl = (
     events.forEach(event => {
       if (event.type === 'move-left') {
         // Move player left with bounds checking
-        const newX = Math.max(PLAYER_SIZE/2, player.position.x - 70);
+        const newX = Math.max(PLAYER_SIZE/2, player.position.x - PLAYER_MOVE_DISTANCE);
         Matter.Body.setPosition(player, { x: newX, y: player.position.y });
         
         // Apply slight tilt for visual feedback
@@ -325,7 +327,7 @@ const PlayerControl = (
         }, 150);
       } else if (event.type === 'move-right') {
         // Move player right with bounds checking
-        const newX = Math.min(SCREEN_WIDTH - PLAYER_SIZE/2, player.position.x + 70);
+        const newX = Math.min(SCREEN_WIDTH - PLAYER_SIZE/2, player.position.x + PLAYER_MOVE_DISTANCE);
         Matter.Body.setPosition(player, { x: newX, y: player.position.y });
         
         // Apply slight tilt for visual feedback
@@ -337,9 +339,28 @@ const PlayerControl = (
             Matter.Body.setAngle(entities.player.body, 0);
           }
         }, 150);
+      } else if (event.type === 'update-player-position' && typeof event.position === 'number') {
+        // Update player position from external source (UI layer)
+        Matter.Body.setPosition(player, { 
+          x: event.position + PLAYER_SIZE/2, 
+          y: player.position.y 
+        });
       }
     });
   }
+  
+  return entities;
+};
+
+// Update to sync player position with external components
+const PlayerPositionSync = (
+  entities: GameEntities,
+  { dispatch }: { dispatch: (event: GameEvent) => void }
+) => {
+  if (!entities.player) return entities;
+  
+  // This is where you would update external components about player position
+  // Using a callback passed via props in the main component
   
   return entities;
 };
@@ -424,9 +445,16 @@ const ObstacleRenderer = (props: RendererProps) => {
 
 // Interface for component props
 interface PhysicsGameEngineProps {
-  onGameOver?: () => void;
   difficultyLevel?: number;
   isPlaying?: boolean;
+  deviceType?: 'phone' | 'tablet';
+  isDevMode?: boolean;
+  onUpdate?: (data: { 
+    playerPosition?: number;
+    obstacleCount?: number; 
+    collision?: { x: number, y: number };
+  }) => void;
+  playerDirection?: SharedValue<number>;
 }
 
 // Add this type declaration at the top of your file
@@ -434,28 +462,102 @@ interface ExtendedGameEngine extends GameEngine {
   dispatch: (event: GameEvent) => void;
 }
 
+// Internal methods exposed via ref
+interface PhysicsGameEngineRef {
+  cleanupEntities: () => void;
+  handlePlayerMovement: (tapX: number) => void;
+}
+
 // Game setup - significantly improved
-export default function PhysicsGameEngine({ 
-  onGameOver, 
+const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProps>(({ 
   difficultyLevel = 1,
-  isPlaying = false 
-}: PhysicsGameEngineProps) {
+  isPlaying = false,
+  deviceType = 'phone',
+  isDevMode = false,
+  onUpdate,
+  playerDirection
+}, ref) => {
   const [entities, setEntities] = useState<GameEntities | null>(null);
+  const [obstacleCount, setObstacleCount] = useState(0);
   const engineRef = useRef<ExtendedGameEngine>(null);
+  const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Expose methods via ref
+  useImperativeHandle(ref, () => ({
+    cleanupEntities: () => {
+      cleanupEntities();
+    },
+    handlePlayerMovement: (tapX: number) => {
+      if (!isPlaying || !engineRef.current) return;
+      
+      const screenCenter = SCREEN_WIDTH / 2;
+      
+      if (tapX < screenCenter) {
+        engineRef.current.dispatch({ type: 'move-left' });
+        
+        // If playerDirection is provided, update it for visual effects
+        if (playerDirection) {
+          playerDirection.value = -1;
+          setTimeout(() => {
+            if (playerDirection) playerDirection.value = 0;
+          }, 300);
+        }
+      } else {
+        engineRef.current.dispatch({ type: 'move-right' });
+        
+        // If playerDirection is provided, update it for visual effects
+        if (playerDirection) {
+          playerDirection.value = 1;
+          setTimeout(() => {
+            if (playerDirection) playerDirection.value = 0;
+          }, 300);
+        }
+      }
+    }
+  }));
   
   // Set up physics engine and entities when game starts
   useEffect(() => {
     if (isPlaying) {
       setupEntities();
-    } else if (entities) {
+      
+      // Start sending updates at 60fps
+      if (onUpdate) {
+        updateIntervalRef.current = setInterval(() => {
+          if (entities?.player?.body) {
+            const playerX = entities.player.body.position.x - PLAYER_SIZE/2;
+            onUpdate({ 
+              playerPosition: playerX,
+              obstacleCount: entities.gameState.obstacles.length
+            });
+          }
+        }, 16);
+      }
+    } else {
       // Clean up when game is no longer playing
       cleanupEntities();
+      
+      if (updateIntervalRef.current) {
+        clearInterval(updateIntervalRef.current);
+        updateIntervalRef.current = null;
+      }
     }
     
     return () => {
       cleanupEntities();
+      if (updateIntervalRef.current) {
+        clearInterval(updateIntervalRef.current);
+        updateIntervalRef.current = null;
+      }
     };
   }, [isPlaying, difficultyLevel]);
+  
+  // Update obstacle count for external components
+  useEffect(() => {
+    if (entities?.gameState?.obstacles) {
+      setObstacleCount(entities.gameState.obstacles.length);
+    }
+  }, [entities?.gameState?.obstacles]);
   
   // Clean up physics entities
   const cleanupEntities = () => {
@@ -486,7 +588,7 @@ export default function PhysicsGameEngine({
     // Disable gravity - we'll control movement manually
     engine.gravity.y = 0;
     
-    // Create player body
+    // Create player body at center
     const player = Matter.Bodies.rectangle(
       SCREEN_WIDTH / 2,
       SCREEN_HEIGHT - PLATFORM_HEIGHT - PLAYER_SIZE/2,
@@ -506,9 +608,15 @@ export default function PhysicsGameEngine({
     // Add bodies to world
     Matter.Composite.add(world, [player]);
     
-    // Configure base speed and generation interval based on difficulty
-    const baseObstacleSpeed = 3 + (difficultyLevel * 0.3);
-    const baseGenerationInterval = Math.max(800, 2000 - (difficultyLevel * 150));
+    // Configure base speed and generation interval based on difficulty and device type
+    let baseObstacleSpeed = 3 + (difficultyLevel * 0.3);
+    let baseGenerationInterval = Math.max(800, 2000 - (difficultyLevel * 150));
+    
+    // Adjust for tablet
+    if (deviceType === 'tablet') {
+      baseObstacleSpeed *= 1.2;
+      baseGenerationInterval *= 0.8;
+    }
     
     // Create game entities
     const newEntities: GameEntities = {
@@ -534,59 +642,47 @@ export default function PhysicsGameEngine({
   
   // Handle events from game engine
   const onEvent = (e: GameEvent) => {
-    if (e.type === 'game-over') {
-      if (onGameOver) onGameOver();
-    }
-  };
-  
-  // Handle tap to control player with improved tap detection
-  const handleTap = (event: GestureResponderEvent) => {
-    if (!engineRef.current) return;
-    
-    const tapX = event.nativeEvent.locationX;
-    const screenCenter = SCREEN_WIDTH / 2;
-    
-    // Dispatch movement based on tap position
-    if (tapX < screenCenter) {
-      engineRef.current.dispatch({ type: 'move-left' });
-    } else {
-      engineRef.current.dispatch({ type: 'move-right' });
+    if (e.type === 'game-over' && entities?.gameState?.lastCollision && onUpdate) {
+      // Send collision position to parent for visual effects
+      onUpdate({ 
+        collision: entities.gameState.lastCollision.position 
+      });
     }
   };
   
   // Don't render anything if not playing or entities not set up
-  if (!entities || !isPlaying) {
+  if (!isPlaying) {
     return <View style={styles.container} />;
   }
   
   return (
-    <View 
-      style={styles.container} 
-      onTouchStart={handleTap}
-    >
-      <GameEngine
-        ref={engineRef}
-        style={styles.gameContainer}
-        systems={[
-          Physics, 
-          ObstacleGenerator, 
-          ObstacleMovement, 
-          CollisionSystem, 
-          PlayerControl
-        ]}
-        entities={entities}
-        onEvent={onEvent}
-        running={isPlaying}
-      />
+    <View style={styles.container}>
+      {entities && (
+        <GameEngine
+          ref={engineRef as React.RefObject<GameEngine>}
+          style={styles.gameContainer}
+          systems={[
+            Physics, 
+            ObstacleGenerator, 
+            ObstacleMovement, 
+            CollisionSystem, 
+            PlayerControl,
+            PlayerPositionSync
+          ]}
+          entities={entities}
+          onEvent={onEvent}
+          running={isPlaying}
+        />
+      )}
       <View style={styles.platform} />
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: 'transparent',
   },
   gameContainer: {
     flex: 1,
@@ -603,9 +699,13 @@ const styles = StyleSheet.create({
     width: PLAYER_SIZE,
     height: PLAYER_SIZE,
     borderRadius: 4,
+    backgroundColor: '#3B82F6',
   },
   obstacle: {
     position: 'absolute',
     borderRadius: 4,
+    backgroundColor: '#EF4444',
   },
 });
+
+export default PhysicsGameEngine;
