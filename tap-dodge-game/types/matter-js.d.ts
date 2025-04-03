@@ -174,6 +174,13 @@ declare module 'matter-js' {
       y: number;
       scale: number;
     };
+    // Add FPS monitoring capability
+    metrics?: {
+      fps?: number;
+      delta?: number;
+      frameTime?: number;
+      frameCount?: number;
+    };
   }
 
   export interface IWorld {
@@ -204,6 +211,13 @@ declare module 'matter-js' {
     function translate(body: Body, translation: Vector): void;
     function rotate(body: Body, rotation: number, point?: Vector): void;
     function scale(body: Body, scaleX: number, scaleY: number, point?: Vector): void;
+    // Add more precise Body transformation methods
+    function update(body: Body, deltaTime: number, timeScale?: number, correction?: number): void;
+    function setSpeed(body: Body, speed: number): void;
+    function setAngularSpeed(body: Body, speed: number): void;
+    // Add collision utilities
+    function getCollisionFilters(body: Body): { category: number; mask: number; group: number };
+    function resetForcesAll(bodies: Body[]): void;
   }
 
   export namespace Bodies {
@@ -262,11 +276,50 @@ declare module 'matter-js' {
 
   export namespace Detector {
     function collisions(pairs: any, detector: any): any;
+    function canCollide(filterA: { category: number; mask: number; group: number }, filterB: { category: number; mask: number; group: number }): boolean;
+    function setBounds(bounds: Bounds): void;
   }
 
   export namespace Common {
     function isElement(obj: any): boolean;
     function extend(obj: any, deep?: boolean, ...sources: any[]): any;
     function clone(obj: any, deep?: boolean): any;
+    // Add timing utilities to help with movement calculations
+    function now(): number;
+    function random(min?: number, max?: number): number;
+  }
+
+  // Add Vector utilities needed for calculating player movement
+  export namespace Vector {
+    function create(x?: number, y?: number): Vector;
+    function add(vectorA: Vector, vectorB: Vector): Vector;
+    function sub(vectorA: Vector, vectorB: Vector): Vector;
+    function mult(vector: Vector, scalar: number): Vector;
+    function div(vector: Vector, scalar: number): Vector;
+    function magnitude(vector: Vector): number;
+    function magnitudeSquared(vector: Vector): number;
+    function normalise(vector: Vector): Vector;
+    function dot(vectorA: Vector, vectorB: Vector): number;
+    function cross(vectorA: Vector, vectorB: Vector): number;
+    function angle(vectorA: Vector, vectorB: Vector): number;
+    function rotate(vector: Vector, angle: number): Vector;
+    // Add these inside the Vector namespace
+    function perp(vector: Vector, negate?: boolean): Vector;
+    function neg(vector: Vector): Vector;
+    function rotate(vector: Vector, angle: number, origin?: Vector): Vector;
+    function rotateAbout(vector: Vector, angle: number, origin: Vector): Vector;
+    function reflect(vector: Vector, normal: Vector): Vector;
+    function distance(vectorA: Vector, vectorB: Vector): number;
+    function distanceSquared(vectorA: Vector, vectorB: Vector): number;
+    function norm(vector: Vector): number;
+    function isZero(vector: Vector): boolean;
+  }
+
+  // Add Query methods for collision detection
+  export namespace Query {
+    function point(bodies: Body[], point: Vector): Body[];
+    function region(bodies: Body[], bounds: Bounds): Body[];
+    function collides(bodyA: Body, bodies: Body[]): CollisionPair[];
+    function ray(bodies: Body[], startPoint: Vector, endPoint: Vector, rayWidth?: number): { body: Body; point: Vector; normal: Vector }[];
   }
 }

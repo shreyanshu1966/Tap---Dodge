@@ -368,11 +368,12 @@ const GameEngine: React.FC<GameEngineProps> = ({
     if (devTapTimer.current) clearTimeout(devTapTimer.current);
   };
 
-  // Handle physics engine updates
+  // Handle physics engine updates with expanded data including FPS
   const handlePhysicsUpdate = (data: { 
     playerPosition?: number;
     obstacleCount?: number;
     collision?: { x: number, y: number };
+    fps?: number;
   }) => {
     // Update player position if provided
     if (data.playerPosition !== undefined) {
@@ -382,6 +383,11 @@ const GameEngine: React.FC<GameEngineProps> = ({
     // Update obstacle count if provided
     if (data.obstacleCount !== undefined) {
       setObstacleCount(data.obstacleCount);
+    }
+    
+    // Update FPS if provided
+    if (data.fps !== undefined) {
+      setFpsStats(data.fps);
     }
     
     // Handle collision if detected
@@ -434,6 +440,7 @@ const GameEngine: React.FC<GameEngineProps> = ({
           deviceType={deviceType}
           isDevMode={isDevMode}
           playerDirection={playerDirection}
+          debugMode={showPerformanceMonitor} // Connect debug mode to performance monitor
         />
         
         {/* Directional Indicators */}
@@ -505,10 +512,13 @@ const GameEngine: React.FC<GameEngineProps> = ({
           />
         )}
 
-        <PerformanceMonitor 
-          visible={showPerformanceMonitor} 
-          onFpsUpdate={(fps) => setFpsStats(fps)}
-        />
+        {/* Display FPS stats from physics engine */}
+        {showPerformanceMonitor && (
+          <View style={styles.performanceContainer}>
+            <Text style={styles.performanceText}>FPS: {fpsStats}</Text>
+            <Text style={styles.performanceText}>Obstacles: {obstacleCount}</Text>
+          </View>
+        )}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -542,6 +552,18 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1F2937', // Tailwind gray-800 equivalent
+  },
+  performanceContainer: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: 10,
+    borderRadius: 5,
+  },
+  performanceText: {
+    color: 'white',
+    fontSize: 14,
   },
 });
 

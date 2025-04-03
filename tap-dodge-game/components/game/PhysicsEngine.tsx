@@ -319,6 +319,12 @@ const PlayerControl = (
         // Apply slight tilt for visual feedback
         Matter.Body.setAngle(player, -0.1);
         
+        // Dispatch position update to sync UI
+        dispatch({ 
+          type: 'update-player-position', 
+          position: newX - PLAYER_SIZE/2 
+        });
+        
         // Set up auto-revert to straight position
         setTimeout(() => {
           if (entities.player && entities.player.body) {
@@ -326,12 +332,18 @@ const PlayerControl = (
           }
         }, 150);
       } else if (event.type === 'move-right') {
-        // Move player right with bounds checking
+        // Similar changes for move-right...
         const newX = Math.min(SCREEN_WIDTH - PLAYER_SIZE/2, player.position.x + PLAYER_MOVE_DISTANCE);
         Matter.Body.setPosition(player, { x: newX, y: player.position.y });
         
         // Apply slight tilt for visual feedback
         Matter.Body.setAngle(player, 0.1);
+        
+        // Dispatch position update to sync UI
+        dispatch({ 
+          type: 'update-player-position', 
+          position: newX - PLAYER_SIZE/2 
+        });
         
         // Set up auto-revert to straight position
         setTimeout(() => {
@@ -453,8 +465,10 @@ interface PhysicsGameEngineProps {
     playerPosition?: number;
     obstacleCount?: number; 
     collision?: { x: number, y: number };
+    fps?: number; // Add FPS reporting
   }) => void;
   playerDirection?: SharedValue<number>;
+  debugMode?: boolean; // Add debug mode toggle
 }
 
 // Add this type declaration at the top of your file
@@ -462,10 +476,13 @@ interface ExtendedGameEngine extends GameEngine {
   dispatch: (event: GameEvent) => void;
 }
 
-// Internal methods exposed via ref
+// Expand the PhysicsGameEngineRef interface for better control
 interface PhysicsGameEngineRef {
   cleanupEntities: () => void;
   handlePlayerMovement: (tapX: number) => void;
+  pausePhysics: () => void;
+  resumePhysics: () => void;
+  getObstacleCount: () => number;
 }
 
 // Game setup - significantly improved
@@ -475,12 +492,18 @@ const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProp
   deviceType = 'phone',
   isDevMode = false,
   onUpdate,
-  playerDirection
+  playerDirection,
+  debugMode = false
 }, ref) => {
   const [entities, setEntities] = useState<GameEntities | null>(null);
   const [obstacleCount, setObstacleCount] = useState(0);
   const engineRef = useRef<ExtendedGameEngine>(null);
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Add FPS tracking
+  const frameCount = useRef(0);
+  const lastFpsUpdateTime = useRef(0);
+  const currentFps = useRef(0);
   
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -493,27 +516,68 @@ const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProp
       const screenCenter = SCREEN_WIDTH / 2;
       
       if (tapX < screenCenter) {
-        engineRef.current.dispatch({ type: 'move-left' });
-        
-        // If playerDirection is provided, update it for visual effects
+        // Update player direction for visual effects
         if (playerDirection) {
           playerDirection.value = -1;
           setTimeout(() => {
             if (playerDirection) playerDirection.value = 0;
           }, 300);
         }
-      } else {
-        engineRef.current.dispatch({ type: 'move-right' });
         
-        // If playerDirection is provided, update it for visual effects
+        // Move player left with bounds checking
+        if (entities?.player?.body) {
+          const player = entities.player.body;
+          const newX = Math.max(PLAYER_SIZE/2, player.position.x - PLAYER_MOVE_DISTANCE);
+          Matter.Body.setPosition(player, { x: newX, y: player.position.y });
+          
+          // Ensure UI gets updated
+          if (onUpdate) {
+            onUpdate({ 
+              playerPosition: newX - PLAYER_SIZE/2,
+              obstacleCount: entities.gameState.obstacles.length,
+              fps: currentFps.current
+            });
+          }
+        }
+      } else {
+        // Update player direction for visual effects
         if (playerDirection) {
           playerDirection.value = 1;
           setTimeout(() => {
             if (playerDirection) playerDirection.value = 0;
           }, 300);
         }
+        
+        // Move player right with bounds checking
+        if (entities?.player?.body) {
+          const player = entities.player.body;
+          const newX = Math.min(SCREEN_WIDTH - PLAYER_SIZE/2, player.position.x + PLAYER_MOVE_DISTANCE);
+          Matter.Body.setPosition(player, { x: newX, y: player.position.y });
+          
+          // Ensure UI gets updated
+          if (onUpdate) {
+            onUpdate({ 
+              playerPosition: newX - PLAYER_SIZE/2,
+              obstacleCount: entities.gameState.obstacles.length,
+              fps: currentFps.current
+            });
+          }
+        }
       }
-    }
+    },
+    pausePhysics: () => {
+      if (updateIntervalRef.current) {
+        clearInterval(updateIntervalRef.current);
+        updateIntervalRef.current = null;
+      }
+    },
+    resumePhysics: () => {
+      if (!updateIntervalRef.current && entities) {
+        setupUpdateInterval();
+      }
+    },
+    // Method to get current obstacle count
+    getObstacleCount: () => entities?.gameState?.obstacles?.length || 0
   }));
   
   // Set up physics engine and entities when game starts
@@ -528,7 +592,8 @@ const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProp
             const playerX = entities.player.body.position.x - PLAYER_SIZE/2;
             onUpdate({ 
               playerPosition: playerX,
-              obstacleCount: entities.gameState.obstacles.length
+              obstacleCount: entities.gameState.obstacles.length,
+              fps: currentFps.current
             });
           }
         }, 16);
@@ -582,6 +647,13 @@ const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProp
       positionIterations: 6,
       velocityIterations: 4
     });
+    
+    // Add ability to enable/disable collision detection in dev mode
+    if (isDevMode) {
+      engine.enableSleeping = false;
+      engine.positionIterations = debugMode ? 8 : 6;  // Better precision in debug mode
+      engine.velocityIterations = debugMode ? 6 : 4;
+    }
     
     const world = engine.world;
     
@@ -647,6 +719,37 @@ const PhysicsGameEngine = forwardRef<PhysicsGameEngineRef, PhysicsGameEngineProp
       onUpdate({ 
         collision: entities.gameState.lastCollision.position 
       });
+    }
+    
+    // Count frames for FPS calculation
+    frameCount.current += 1;
+    const now = Date.now();
+    
+    // Calculate FPS every second
+    if (now - lastFpsUpdateTime.current >= 1000) {
+      currentFps.current = frameCount.current;
+      frameCount.current = 0;
+      lastFpsUpdateTime.current = now;
+      
+      if (onUpdate) {
+        onUpdate({ fps: currentFps.current });
+      }
+    }
+  };
+  
+  // Helper method for setting up the update interval
+  const setupUpdateInterval = () => {
+    if (onUpdate) {
+      updateIntervalRef.current = setInterval(() => {
+        if (entities?.player?.body) {
+          const playerX = entities.player.body.position.x - PLAYER_SIZE/2;
+          onUpdate({ 
+            playerPosition: playerX,
+            obstacleCount: entities.gameState.obstacles.length,
+            fps: currentFps.current
+          });
+        }
+      }, 16);
     }
   };
   
